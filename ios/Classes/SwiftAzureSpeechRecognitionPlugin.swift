@@ -276,10 +276,19 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 print("final result \(res!)")
                 self.azureChannel.invokeMethod("speech.onFinalResponse", arguments: res)
             })
-            print("Listening...")
-            try! continousSpeechRecognizer!.startContinuousRecognition()
-            self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
-            continousListeningStarted = true
+            
+            do {
+                print("Listening...")
+                try continousSpeechRecognizer?.stopContinuousRecognition()
+                self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
+                continousListeningStarted = true
+            }
+            catch {
+                print("stopContinuousRecognition stop")
+                self.azureChannel.invokeMethod("speech.onException", arguments: nil)
+                continousSpeechRecognizer = nil
+                continousListeningStarted = false
+            }
         }
     }
     
