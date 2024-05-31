@@ -285,6 +285,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
             }
             catch {
                 print("stopContinuousRecognition stop")
+                try! continousSpeechRecognizer?.stopContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onException", arguments: nil)
                 continousSpeechRecognizer = nil
                 continousListeningStarted = false
