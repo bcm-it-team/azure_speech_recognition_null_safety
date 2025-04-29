@@ -97,11 +97,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
             print("Started recognition with task ID \(taskId)")
             var speechConfig: SPXSpeechConfiguration?
             do {
-                let audioSession = AVAudioSession.sharedInstance()
-                // Request access to the microphone
-                try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
-                try audioSession.setActive(true)
-                print("Setting custom audio session")
+                setupAudioSession()
                 // Initialize speech recognizer and specify correct subscription key and service region
                 try speechConfig = SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
             } catch {
@@ -154,11 +150,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
             var speechConfig: SPXSpeechConfiguration?
             var pronunciationAssessmentConfig: SPXPronunciationAssessmentConfiguration?
             do {
-                let audioSession = AVAudioSession.sharedInstance()
-                // Request access to the microphone
-                try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
-                try audioSession.setActive(true)
-                print("Setting custom audio session")
+                setupAudioSession()
                 // Initialize speech recognizer and specify correct subscription key and service region
                 try speechConfig = SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
                 try pronunciationAssessmentConfig = SPXPronunciationAssessmentConfiguration.init(
@@ -249,16 +241,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         }
         else {
             print("Starting continous recognition")
-            do {
-                let audioSession = AVAudioSession.sharedInstance()
-                // Request access to the microphone
-                try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
-                try audioSession.setActive(true)
-                print("Setting custom audio session")
-            }
-            catch {
-                print("An unexpected error occurred")
-            }
+            setupAudioSession()
             
             let speechConfig = try! SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
             
@@ -310,11 +293,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         else {
             print("Starting continous recognition")
             do {
-                let audioSession = AVAudioSession.sharedInstance()
-                // Request access to the microphone
-                try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
-                try audioSession.setActive(true)
-                print("Setting custom audio session")
+                setupAudioSession()
                 
                 let speechConfig = try SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
                 speechConfig.speechRecognitionLanguage = lang
@@ -356,6 +335,29 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
             catch {
                 print("An unexpected error occurred: \(error)")
             }
+        }
+    }
+    
+    private func setupAudioSession() {
+        let audioSession = AVAudioSession.sharedInstance()
+        
+        do {
+            if audioSession.category != .playAndRecord {
+                print("Setting up AudioSession category to playAndRecord")
+                try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker])
+            } else {
+                print("AudioSession category already playAndRecord")
+            }
+            
+            if !audioSession.isOtherAudioPlaying || !audioSession.isInputAvailable {
+                // 오디오 세션을 활성화
+                print("Activating AudioSession")
+                try audioSession.setActive(true)
+            } else {
+                print("Audio already playing or input available, skipping activation")
+            }
+        } catch {
+            print("Failed to setup AudioSession: \(error)")
         }
     }
 }
