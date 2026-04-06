@@ -18,6 +18,21 @@ To install the package use the latest version:
 azure_speech_recognition_null_safety: ^<insert_latest_version_here>
 ```
 
+### Android 16KB page-size note
+
+- The Android implementation defaults to Microsoft Speech SDK `1.48.2`.
+- The `kws.ort` native extension in SDK `1.44.0+` is 16KB-aligned, so host-app `jniLibs` excludes are not required for this package default.
+- Release minification (`minifyEnabled true`) is supported via plugin consumer ProGuard rules (no extra host-app rules needed).
+- If you need a different SDK version, override with Gradle property:
+
+```properties
+# android/gradle.properties (project-level, next to settings.gradle)
+AZURE_SPEECH_SDK_VERSION=1.48.2
+```
+
+- Use `1.44.0+` to keep 16KB page-size compatibility on Android.
+- Override versions must exist in `google()` / `mavenCentral()` repositories.
+
 ## Usage
 
 ```dart

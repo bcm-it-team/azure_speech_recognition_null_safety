@@ -1,3 +1,27 @@
+## 0.9.6+8
+- Fix(Android): Add plugin-level consumer ProGuard rules for Speech SDK reactive/logging optional classes in release minification.
+- Chore(Android): Keep default Speech SDK at `1.48.2` with 16KB-native alignment and no host-app `jniLibs` excludes.
+
+## 0.9.6+7
+- Fix(Android): Set Microsoft Speech SDK default to `1.48.2` to avoid release R8 missing-class errors seen on `1.50.0`.
+- Chore(Android): Keep native 16KB alignment baseline (`kws.ort` is 16KB-aligned on `1.44.0+`) without host-app excludes.
+
+## 0.9.6+6
+- Chore(Android): Upgrade Microsoft Speech SDK default to `1.50.0` for native 16KB alignment.
+- Chore(Android): Remove `kws.ort` exclusion workaround from plugin/example Gradle setup.
+- Docs(Android): Update 16KB guidance to recommend SDK upgrade over host-app excludes.
+
+## 0.9.6+5
+- Chore(Android): Publish dedicated tag for 16KB rollout in host apps.
+- Chore(Android): Keep `kws.ort` exclusion guidance and SDK override (`AZURE_SPEECH_SDK_VERSION`) for Play compatibility checks.
+
+## 0.9.6+4
+- Chore(Android): Upgrade Microsoft Speech SDK dependency to `1.43.0` by default.
+- Chore(Android): Exclude `kws.ort` native extension for `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64` to satisfy 16KB page-size alignment checks.
+- Chore(Android): Add `AZURE_SPEECH_SDK_VERSION` Gradle property override support.
+- Breaking(Android): Raise `minSdkVersion` to `24`.
+- Note(Android): Host app should keep `packaging.jniLibs.excludes` for `kws.ort` in app module when enforcing 16KB checks.
+
 ## 0.9.6
 - Fix: Update gradle for compatibility with Android Studio Ladybug 2024.2.1.
 
