@@ -1,66 +1,46 @@
 package com.jjordanoc.azure_speech_recognition_null_safety
 
-import androidx.annotation.NonNull
+import android.app.Activity
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import com.microsoft.cognitiveservices.speech.PronunciationAssessmentConfig
+import com.microsoft.cognitiveservices.speech.PronunciationAssessmentGradingSystem
+import com.microsoft.cognitiveservices.speech.PronunciationAssessmentGranularity
+import com.microsoft.cognitiveservices.speech.PropertyId
+import com.microsoft.cognitiveservices.speech.ResultReason
+import com.microsoft.cognitiveservices.speech.SpeechConfig
+import com.microsoft.cognitiveservices.speech.SpeechRecognitionResult
+import com.microsoft.cognitiveservices.speech.SpeechRecognizer
+import com.microsoft.cognitiveservices.speech.audio.AudioConfig
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.plugin.common.PluginRegistry.Registrar
-import com.microsoft.cognitiveservices.speech.audio.AudioConfig
-import com.microsoft.cognitiveservices.speech.intent.LanguageUnderstandingModel
-import com.microsoft.cognitiveservices.speech.intent.IntentRecognitionResult
-import com.microsoft.cognitiveservices.speech.intent.IntentRecognizer
-import com.bregant.azure_speech_recognition.MicrophoneStream
-import android.app.Activity
-
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
-import java.util.concurrent.Callable
-import android.os.Handler
-import android.os.Looper
-import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
-//import androidx.core.app.ActivityCompat;
-import java.net.URI
-import android.util.Log
-import android.text.TextUtils
-import com.microsoft.cognitiveservices.speech.*
-
-import java.util.concurrent.Semaphore
 
 
 /** AzureSpeechRecognitionPlugin */
 class AzureSpeechRecognitionPlugin : FlutterPlugin, Activity(), MethodCallHandler {
     private lateinit var azureChannel: MethodChannel
-    private lateinit var handler: Handler
+    private var handler: Handler = Handler(Looper.getMainLooper())
     var continuousListeningStarted: Boolean = false
     lateinit var reco: SpeechRecognizer
     lateinit var task_global: Future<SpeechRecognitionResult>
 
-    override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+    override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         azureChannel = MethodChannel(
-            flutterPluginBinding.getFlutterEngine().getDartExecutor(), "azure_speech_recognition"
+            flutterPluginBinding.binaryMessenger, "azure_speech_recognition"
         )
         azureChannel.setMethodCallHandler(this)
 
     }
 
-    init {
-        fun registerWith(registrar: Registrar) {
-            val channel = MethodChannel(registrar.messenger(), "azure_speech_recognition")
 
-            this.azureChannel = MethodChannel(registrar.messenger(), "azure_speech_recognition")
-            this.azureChannel.setMethodCallHandler(this)
-        }
-
-        handler = Handler(Looper.getMainLooper())
-    }
-
-
-    override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
+    override fun onMethodCall(call: MethodCall, result: Result) {
         val speechSubscriptionKey: String = call.argument("subscriptionKey") ?: ""
         val serviceRegion: String = call.argument("region") ?: ""
         val lang: String = call.argument("language") ?: ""
@@ -69,7 +49,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, Activity(), MethodCallHandle
         val phonemeAlphabet: String = call.argument("phonemeAlphabet") ?: "IPA"
         val granularityString: String = call.argument("granularity") ?: "phoneme"
         val enableMiscue: Boolean = call.argument("enableMiscue") ?: false
-        val nBestPhonemeCount: Int? = call.argument("nBestPhonemeCount") ?: null
+        val nBestPhonemeCount: Int? = call.argument("nBestPhonemeCount")
         val granularity: PronunciationAssessmentGranularity
         when (granularityString) {
             "text" -> {
@@ -138,7 +118,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, Activity(), MethodCallHandle
         }
     }
 
-    override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         azureChannel.setMethodCallHandler(null)
     }
 
@@ -204,20 +184,19 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, Activity(), MethodCallHandle
         timeoutMs: String,
         nBestPhonemeCount: Int?,
     ) {
-        val logTag: String = "simpleVoiceWithAssessment"
-
+        val logTag = "simpleVoiceWithAssessment"
 
         try {
 
-            var audioInput: AudioConfig = AudioConfig.fromDefaultMicrophoneInput()
+            val audioInput: AudioConfig = AudioConfig.fromDefaultMicrophoneInput()
 
-            var config: SpeechConfig =
+            val config: SpeechConfig =
                 SpeechConfig.fromSubscription(speechSubscriptionKey, serviceRegion)
 
             config.speechRecognitionLanguage = lang
             config.setProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs, timeoutMs)
 
-            var pronunciationAssessmentConfig: PronunciationAssessmentConfig =
+            val pronunciationAssessmentConfig =
                 PronunciationAssessmentConfig(
                     referenceText,
                     PronunciationAssessmentGradingSystem.HundredMark,
@@ -232,7 +211,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, Activity(), MethodCallHandle
 
             Log.i(logTag, pronunciationAssessmentConfig.toJson())
 
-            val reco: SpeechRecognizer = SpeechRecognizer(config, audioInput)
+            val reco = SpeechRecognizer(config, audioInput)
 
             pronunciationAssessmentConfig.applyTo(reco)
 

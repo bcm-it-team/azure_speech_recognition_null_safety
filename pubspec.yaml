@@ -1,16 +1,16 @@
 name: azure_speech_recognition_null_safety
 description: azure_speech_recognition with sound null safety.
-version: 0.9.6
+version: 0.9.6+8
 homepage: https://github.com/jjordanoc/azure_speech_recognition_null_safety
 
 environment:
-  sdk: '>=2.18.0 <4.0.0'
+  sdk: ">=2.18.0 <4.0.0"
   flutter: ">=1.10.0"
- 
 
 dependencies:
   flutter:
     sdk: flutter
+  permission_handler: ^11.4.0
 
 dev_dependencies:
   flutter_test:
@@ -30,7 +30,7 @@ flutter:
       android:
         package: com.jjordanoc.azure_speech_recognition_null_safety
         pluginClass: AzureSpeechRecognitionPlugin
-      ios: 
+      ios:
         package: com.jjordanoc.azure_speech_recognition_null_safety
         pluginClass: SwiftAzureSpeechRecognitionPlugin
 
