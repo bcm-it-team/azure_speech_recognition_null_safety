@@ -30,6 +30,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
     var continuousListeningStarted: Boolean = false
     private var continuousListeningStarting: Boolean = false
     private var stopRequestedWhileStarting: Boolean = false
+    private var pendingStartResult: Result? = null
     private var pendingStopResult: Result? = null
     lateinit var reco: SpeechRecognizer
     lateinit var task_global: Future<SpeechRecognitionResult>
@@ -101,8 +102,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
             }
 
             "startContinuousStream" -> {
-                startContinuousMicStream(speechSubscriptionKey, serviceRegion, lang)
-                result.success(true)
+                startContinuousMicStream(speechSubscriptionKey, serviceRegion, lang, result)
             }
 
             "continuousStreamWithAssessment" -> {
@@ -295,13 +295,26 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun startContinuousMicStream(
-        speechSubscriptionKey: String, serviceRegion: String, lang: String
+        speechSubscriptionKey: String,
+        serviceRegion: String,
+        lang: String,
+        flutterResult: Result? = null,
     ) {
         val logTag = "micStreamContinuous"
-        if (continuousListeningStarted || continuousListeningStarting) {
+        if (continuousListeningStarted) {
+            flutterResult?.success(true)
+            return
+        }
+        if (continuousListeningStarting) {
+            flutterResult?.error(
+                "azure_start_in_progress",
+                "Continuous recognition is already starting",
+                null,
+            )
             return
         }
         continuousListeningStarting = true
+        pendingStartResult = flutterResult
         try {
             val audioConfig = createMicrophoneAudioConfig()
 
@@ -331,6 +344,8 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
                 {
                     continuousListeningStarting = false
                     continuousListeningStarted = true
+                    pendingStartResult?.success(true)
+                    pendingStartResult = null
                     invokeMethod("speech.onRecognitionStarted", null)
                     if (stopRequestedWhileStarting) {
                         stopRequestedWhileStarting = false
@@ -352,22 +367,35 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
         Log.i(logTag, "Continuous recognition started: $continuousListeningStarted")
 
         if (continuousListeningStarting) {
+            if (pendingStopResult != null) {
+                flutterResult?.success(true)
+                return
+            }
             stopRequestedWhileStarting = true
             pendingStopResult = flutterResult
             return
         }
 
         if (continuousListeningStarted) {
-            val _task1 = reco.stopContinuousRecognitionAsync()
-
-            setOnTaskCompletedListener(_task1) { result ->
-                Log.i(logTag, "Continuous recognition stopped.")
-                continuousListeningStarted = false
-                invokeMethod("speech.onRecognitionStopped", null)
-                reco.close()
-                closeMicrophoneStream()
-                flutterResult?.success(true)
+            val stopTask = try {
+                reco.stopContinuousRecognitionAsync()
+            } catch (error: Throwable) {
+                handleContinuousStopFailure(error, flutterResult)
+                return
             }
+
+            setOnTaskCompletedListenerWithFailure(
+                stopTask,
+                {
+                    Log.i(logTag, "Continuous recognition stopped.")
+                    continuousListeningStarted = false
+                    invokeMethod("speech.onRecognitionStopped", null)
+                    reco.close()
+                    closeMicrophoneStream()
+                    flutterResult?.success(true)
+                },
+                { error -> handleContinuousStopFailure(error, flutterResult) },
+            )
             return
         }
 
@@ -394,15 +422,24 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
                 stopRequestedWhileStarting = true
                 return
             }
-            val endingTask = reco.stopContinuousRecognitionAsync()
-
-            setOnTaskCompletedListener(endingTask) { result ->
-                Log.i(logTag, "Continuous recognition stopped.")
-                continuousListeningStarted = false
-                invokeMethod("speech.onRecognitionStopped", null)
-                reco.close()
-                closeMicrophoneStream()
+            val endingTask = try {
+                reco.stopContinuousRecognitionAsync()
+            } catch (error: Throwable) {
+                handleContinuousStopFailure(error, null)
+                return
             }
+
+            setOnTaskCompletedListenerWithFailure(
+                endingTask,
+                {
+                    Log.i(logTag, "Continuous recognition stopped.")
+                    continuousListeningStarted = false
+                    invokeMethod("speech.onRecognitionStopped", null)
+                    reco.close()
+                    closeMicrophoneStream()
+                },
+                { error -> handleContinuousStopFailure(error, null) },
+            )
             return
         }
 
@@ -496,6 +533,7 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
         continuousListeningStarted = false
         continuousListeningStarting = false
         stopRequestedWhileStarting = false
+        pendingStartResult = null
         pendingStopResult = null
         if (this::reco.isInitialized) {
             runCatching {
@@ -517,12 +555,33 @@ class AzureSpeechRecognitionPlugin : FlutterPlugin, MethodCallHandler {
             runCatching { reco.close() }
         }
         closeMicrophoneStream()
+        pendingStartResult?.error(
+            "azure_start_failed",
+            error.message,
+            null,
+        )
+        pendingStartResult = null
         pendingStopResult?.error(
             "azure_start_failed",
             error.message,
             null,
         )
         pendingStopResult = null
+        invokeMethod("speech.onException", "Exception: ${error.message}")
+    }
+
+    private fun handleContinuousStopFailure(error: Throwable, flutterResult: Result?) {
+        continuousListeningStarted = false
+        continuousListeningStarting = false
+        if (this::reco.isInitialized) {
+            runCatching { reco.close() }
+        }
+        closeMicrophoneStream()
+        flutterResult?.error(
+            "azure_stop_failed",
+            error.message,
+            null,
+        )
         invokeMethod("speech.onException", "Exception: ${error.message}")
     }
 

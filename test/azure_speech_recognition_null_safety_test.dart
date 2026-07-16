@@ -47,7 +47,34 @@ void main() {
     });
   });
 
-  test('stops continuous recognition through the explicit stop method', () async {
+  test('propagates a native continuous-recognition start failure', () async {
+    AzureSpeechRecognition.initialize(
+      'subscription-key',
+      'koreacentral',
+    );
+    channel.setMockMethodCallHandler((MethodCall methodCall) async {
+      lastCall = methodCall;
+      throw PlatformException(
+        code: 'azure_start_failed',
+        message: 'Unable to start microphone stream',
+      );
+    });
+
+    await expectLater(
+      AzureSpeechRecognition.startContinuousRecognition(),
+      throwsA(
+        isA<PlatformException>().having(
+          (exception) => exception.code,
+          'code',
+          'azure_start_failed',
+        ),
+      ),
+    );
+    expect(lastCall?.method, 'startContinuousStream');
+  });
+
+  test('stops continuous recognition through the explicit stop method',
+      () async {
     await AzureSpeechRecognition.stopContinuousRecognition();
 
     expect(lastCall?.method, 'stopContinuousStream');

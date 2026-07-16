@@ -15,6 +15,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
     var continousListeningStarted: Bool = false
     private var continousListeningStarting: Bool = false
     private var stopRequestedWhileStarting: Bool = false
+    private var pendingStartResult: FlutterResult?
     private var pendingStopResult: FlutterResult?
     var continousSpeechRecognizer: SPXSpeechRecognizer? = nil
     var simpleRecognitionTasks: Dictionary<String, SimpleRecognitionTask> = [:]
@@ -84,9 +85,9 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 speechSubscriptionKey: speechSubscriptionKey,
                 serviceRegion: serviceRegion,
                 lang: lang,
-                shouldToggle: false
+                shouldToggle: false,
+                flutterResult: result
             )
-            result(true)
         }
         else if (call.method == "continuousStreamWithAssessment") {
             print("Called continuousStreamWithAssessment")
@@ -235,6 +236,10 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
     
     private func stopContinuousStream(flutterResult: FlutterResult) {
         if continousListeningStarting {
+            if pendingStopResult != nil {
+                flutterResult(true)
+                return
+            }
             stopRequestedWhileStarting = true
             pendingStopResult = flutterResult
             return
@@ -261,64 +266,86 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         speechSubscriptionKey : String,
         serviceRegion : String,
         lang: String,
-        shouldToggle: Bool = true
+        shouldToggle: Bool = true,
+        flutterResult: FlutterResult? = nil
     ) {
-        if continousListeningStarting || (!shouldToggle && continousListeningStarted) {
+        if continousListeningStarting {
+            flutterResult?(FlutterError(
+                code: "azure_start_in_progress",
+                message: "Continuous recognition is already starting",
+                details: nil
+            ))
+            return
+        }
+        if !shouldToggle && continousListeningStarted {
+            flutterResult?(true)
             return
         }
         if (continousListeningStarted) {
             print("Stopping continous recognition")
+            guard let recognizer = continousSpeechRecognizer else {
+                finishContinuousRecognition()
+                flutterResult?(true)
+                return
+            }
             do {
-                try continousSpeechRecognizer!.stopContinuousRecognition()
+                try recognizer.stopContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
                 continousSpeechRecognizer = nil
                 continousListeningStarted = false
                 stopMicrophoneStream()
+                flutterResult?(true)
             }
             catch {
                 print("Error occurred stopping continous recognition")
+                flutterResult?(FlutterError(
+                    code: "azure_stop_failed",
+                    message: error.localizedDescription,
+                    details: nil
+                ))
             }
         }
         else {
             print("Starting continous recognition")
             continousListeningStarting = true
-            setupAudioSession()
-            
-            let speechConfig = try! SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
-            
-            speechConfig.speechRecognitionLanguage = lang
-            
-            guard let audioConfig = try? createStreamAudioConfiguration() else {
-                failContinuousStart(message: "Unable to start microphone stream")
-                return
-            }
-            
-            continousSpeechRecognizer = try! SPXSpeechRecognizer(speechConfiguration: speechConfig, audioConfiguration: audioConfig)
-            continousSpeechRecognizer!.addRecognizingEventHandler() {reco, evt in
+            pendingStartResult = flutterResult
+            do {
+                setupAudioSession()
+                let speechConfig = try SPXSpeechConfiguration(
+                    subscription: speechSubscriptionKey,
+                    region: serviceRegion
+                )
+                speechConfig.speechRecognitionLanguage = lang
+                let audioConfig = try createStreamAudioConfiguration()
+                let recognizer = try SPXSpeechRecognizer(
+                    speechConfiguration: speechConfig,
+                    audioConfiguration: audioConfig
+                )
+                continousSpeechRecognizer = recognizer
+                recognizer.addRecognizingEventHandler() {reco, evt in
                 print("intermediate recognition result: \(evt.result.text ?? "(no result)")")
                 self.azureChannel.invokeMethod("speech.onSpeech", arguments: evt.result.text)
-            }
-            continousSpeechRecognizer!.addRecognizedEventHandler({reco, evt in
-                let res = evt.result.text
-                print("final result \(res!)")
-                self.azureChannel.invokeMethod("speech.onFinalResponse", arguments: res)
-            })
-            
-            do {
+                }
+                recognizer.addRecognizedEventHandler({reco, evt in
+                    let resultText = evt.result.text ?? ""
+                    print("final result \(resultText)")
+                    self.azureChannel.invokeMethod("speech.onFinalResponse", arguments: resultText)
+                })
                 print("Listening...")
-                try continousSpeechRecognizer?.startContinuousRecognition()
+                try recognizer.startContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
                 continousListeningStarted = true
                 continousListeningStarting = false
+                pendingStartResult?(true)
+                pendingStartResult = nil
                 if stopRequestedWhileStarting {
                     stopRequestedWhileStarting = false
                     let result = pendingStopResult
                     pendingStopResult = nil
                     stopContinuousStream(flutterResult: result ?? { _ in })
                 }
-            }
-            catch {
-                print("stopContinuousRecognition stop")
+            } catch {
+                print("Continuous recognition start failed: \(error)")
                 failContinuousStart(message: error.localizedDescription)
             }
         }
@@ -332,12 +359,13 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         }
         if (continousListeningStarted) {
             print("Stopping continous recognition")
+            guard let recognizer = continousSpeechRecognizer else {
+                finishContinuousRecognition()
+                return
+            }
             do {
-                try continousSpeechRecognizer!.stopContinuousRecognition()
-                self.azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
-                continousSpeechRecognizer = nil
-                continousListeningStarted = false
-                stopMicrophoneStream()
+                try recognizer.stopContinuousRecognition()
+                finishContinuousRecognition()
             }
             catch {
                 print("Error occurred stopping continous recognition")
@@ -348,35 +376,32 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
             continousListeningStarting = true
             do {
                 setupAudioSession()
-                
                 let speechConfig = try SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
                 speechConfig.speechRecognitionLanguage = lang
-                
                 let pronunciationAssessmentConfig = try SPXPronunciationAssessmentConfiguration.init(
                     referenceText,
                     gradingSystem: SPXPronunciationAssessmentGradingSystem.hundredMark,
                     granularity: granularity,
                     enableMiscue: enableMiscue)
                 pronunciationAssessmentConfig.phonemeAlphabet = phonemeAlphabet
-                
-                if nBestPhonemeCount != nil {
-                    pronunciationAssessmentConfig.nbestPhonemeCount = nBestPhonemeCount!
+
+                if let nBestPhonemeCount {
+                    pronunciationAssessmentConfig.nbestPhonemeCount = nBestPhonemeCount
                 }
-                
-                
-                guard let audioConfig = try? createStreamAudioConfiguration() else {
-                    failContinuousStart(message: "Unable to start microphone stream")
-                    return
-                }
-                
-                continousSpeechRecognizer = try SPXSpeechRecognizer(speechConfiguration: speechConfig, audioConfiguration: audioConfig)
-                try pronunciationAssessmentConfig.apply(to: continousSpeechRecognizer!)
-                
-                continousSpeechRecognizer!.addRecognizingEventHandler() {reco, evt in
+
+                let audioConfig = try createStreamAudioConfiguration()
+                let recognizer = try SPXSpeechRecognizer(
+                    speechConfiguration: speechConfig,
+                    audioConfiguration: audioConfig
+                )
+                try pronunciationAssessmentConfig.apply(to: recognizer)
+                continousSpeechRecognizer = recognizer
+
+                recognizer.addRecognizingEventHandler() {reco, evt in
                     print("intermediate recognition result: \(evt.result.text ?? "(no result)")")
                     self.azureChannel.invokeMethod("speech.onSpeech", arguments: evt.result.text)
                 }
-                continousSpeechRecognizer!.addRecognizedEventHandler({reco, evt in
+                recognizer.addRecognizedEventHandler({reco, evt in
                     let result = evt.result
                     print("Final result: \(result.text ?? "(no result)")\nReason: \(result.reason.rawValue)")
                     let pronunciationAssessmentResultJson = result.properties?.getPropertyBy(SPXPropertyId.speechServiceResponseJsonResult)
@@ -385,7 +410,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                     self.azureChannel.invokeMethod("speech.onAssessmentResult", arguments: pronunciationAssessmentResultJson)
                 })
                 print("Listening...")
-                try continousSpeechRecognizer!.startContinuousRecognition()
+                try recognizer.startContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
                 continousListeningStarted = true
                 continousListeningStarting = false
@@ -409,6 +434,12 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         continousListeningStarting = false
         stopRequestedWhileStarting = false
         stopMicrophoneStream()
+        pendingStartResult?(FlutterError(
+            code: "azure_start_failed",
+            message: message,
+            details: nil
+        ))
+        pendingStartResult = nil
         pendingStopResult?(FlutterError(
             code: "azure_start_failed",
             message: message,
