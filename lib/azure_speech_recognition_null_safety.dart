@@ -6,10 +6,10 @@ typedef void StringResultHandler(String text);
 
 class AzureSpeechRecognition {
   static const MethodChannel _channel =
-  const MethodChannel('azure_speech_recognition');
+      const MethodChannel('azure_speech_recognition');
 
   static final AzureSpeechRecognition _azureSpeechRecognition =
-  new AzureSpeechRecognition._internal();
+      new AzureSpeechRecognition._internal();
 
   factory AzureSpeechRecognition() => _azureSpeechRecognition;
 
@@ -52,29 +52,36 @@ class AzureSpeechRecognition {
   VoidCallback? recognitionStartedHandler;
   VoidCallback? startRecognitionHandler;
   VoidCallback? recognitionStoppedHandler;
+  void Function(double level)? soundLevelHandler;
 
   Future _platformCallHandler(MethodCall call) async {
     switch (call.method) {
       case "speech.onRecognitionStarted":
-        recognitionStartedHandler!();
+        recognitionStartedHandler?.call();
         break;
       case "speech.onSpeech":
-        recognitionResultHandler!(call.arguments);
+        recognitionResultHandler?.call(call.arguments);
         break;
       case "speech.onFinalResponse":
-        finalTranscriptionHandler!(call.arguments);
+        finalTranscriptionHandler?.call(call.arguments);
         break;
       case "speech.onAssessmentResult":
-        assessmentResultHandler!(call.arguments);
+        assessmentResultHandler?.call(call.arguments);
         break;
       case "speech.onStartAvailable":
-        startRecognitionHandler!();
+        startRecognitionHandler?.call();
         break;
       case "speech.onRecognitionStopped":
-        recognitionStoppedHandler!();
+        recognitionStoppedHandler?.call();
         break;
       case "speech.onException":
-        exceptionHandler!(call.arguments);
+        exceptionHandler?.call(call.arguments);
+        break;
+      case "speech.onSoundLevel":
+        final level = call.arguments;
+        if (level is num) {
+          soundLevelHandler?.call(level.toDouble());
+        }
         break;
       default:
         print("Error: method called not found");
@@ -108,6 +115,10 @@ class AzureSpeechRecognition {
   void setRecognitionStoppedHandler(VoidCallback handler) =>
       recognitionStoppedHandler = handler;
 
+  /// Current microphone level normalized to the 0 ~ 100 range.
+  void setSoundLevelHandler(void Function(double level) handler) =>
+      soundLevelHandler = handler;
+
   // Performs speech recognition until a silence is detected
   static void simpleVoiceRecognition() {
     if ((_subKey != null && _region != null)) {
@@ -123,10 +134,13 @@ class AzureSpeechRecognition {
   }
 
   /// Performs speech recognition until a silence is detected (with speech assessment)
-  static void simpleVoiceRecognitionWithAssessment({String? referenceText,
+  static void simpleVoiceRecognitionWithAssessment({
+    String? referenceText,
     String? phonemeAlphabet,
     String? granularity,
-    bool? enableMiscue, int? nBestPhonemeCount,}) {
+    bool? enableMiscue,
+    int? nBestPhonemeCount,
+  }) {
     if ((_subKey != null && _region != null)) {
       _channel.invokeMethod('simpleVoiceWithAssessment', {
         'language': _lang,
@@ -144,7 +158,6 @@ class AzureSpeechRecognition {
     }
   }
 
-
   /// When called for the first time, starts performing continuous recognition
   /// When called a second time, it stops the previously started recognition
   /// It essentially toggles between "recording" and "not recording" states
@@ -157,13 +170,32 @@ class AzureSpeechRecognition {
     }
   }
 
+  static Future<void> startContinuousRecognition() {
+    final subscriptionKey = _subKey;
+    final region = _region;
+    if (subscriptionKey == null ||
+        subscriptionKey.isEmpty ||
+        region == null ||
+        region.isEmpty) {
+      throw StateError('SpeechRecognitionParameters not initialized correctly');
+    }
+    return _channel.invokeMethod('startContinuousStream', {
+      'language': _lang,
+      'subscriptionKey': subscriptionKey,
+      'region': region,
+    });
+  }
+
   /// When called for the first time, starts performing continuous recognition (with speech assessment)
   /// When called a second time, it stops the previously started recognition (with speech assessment)
   /// It essentially toggles between "recording" and "not recording" states
-  static void continuousRecordingWithAssessment({String? referenceText,
+  static void continuousRecordingWithAssessment({
+    String? referenceText,
     String? phonemeAlphabet,
     String? granularity,
-    bool? enableMiscue, int? nBestPhonemeCount,}) {
+    bool? enableMiscue,
+    int? nBestPhonemeCount,
+  }) {
     if ((_subKey != null && _region != null)) {
       _channel.invokeMethod('continuousStreamWithAssessment', {
         'language': _lang,
@@ -180,11 +212,11 @@ class AzureSpeechRecognition {
     }
   }
 
-
   /// When continuously recording, returns true, otherwise it returns false
   static Future<bool> isContinuousRecognitionOn() {
-    return _channel.invokeMethod<bool>('isContinuousRecognitionOn').then<bool>((
-        bool? value) => value ?? false);
+    return _channel
+        .invokeMethod<bool>('isContinuousRecognitionOn')
+        .then<bool>((bool? value) => value ?? false);
   }
 
   static Future<void> stopContinuousRecognition() async {

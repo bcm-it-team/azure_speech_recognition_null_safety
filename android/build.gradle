@@ -1,61 +1,43 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
 group 'com.jjordanoc.azure_speech_recognition_null_safety'
 version '1.0-SNAPSHOT'
-
-buildscript {
-    ext.kotlin_version = '1.7.10'
-    repositories {
-        google()
-        mavenCentral()
-    }
-
-    dependencies {
-        classpath 'com.android.tools.build:gradle:7.3.0'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-    }
-}
-
-rootProject.allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
 
 def speechSdkVersion = project.findProperty("AZURE_SPEECH_SDK_VERSION") ?: "1.48.2"
 
 android {
     namespace 'com.jjordanoc.azure_speech_recognition_null_safety'
-    compileSdkVersion 35
+    compileSdk 37
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = '11'
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     defaultConfig {
-        minSdkVersion 24
+        minSdk 26
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles 'consumer-rules.pro'
     }
 
-    lintOptions {
-        disable 'InvalidPackage'
+    lint {
+        disable.add('InvalidPackage')
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation "com.microsoft.cognitiveservices.speech:client-sdk:$speechSdkVersion"
-
 }

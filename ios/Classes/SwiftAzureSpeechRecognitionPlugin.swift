@@ -13,8 +13,15 @@ struct SimpleRecognitionTask {
 public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
     var azureChannel: FlutterMethodChannel
     var continousListeningStarted: Bool = false
+    private var continousListeningStarting: Bool = false
+    private var stopRequestedWhileStarting: Bool = false
+    private var pendingStopResult: FlutterResult?
     var continousSpeechRecognizer: SPXSpeechRecognizer? = nil
     var simpleRecognitionTasks: Dictionary<String, SimpleRecognitionTask> = [:]
+    private let audioEngine = AVAudioEngine()
+    private var pushAudioStream: SPXPushAudioInputStream?
+    private var audioConverter: AVAudioConverter?
+    private var lastSoundLevelReportedAt = Date.distantPast
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "azure_speech_recognition", binaryMessenger: registrar.messenger())
@@ -23,6 +30,13 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
     }
     init(azureChannel: FlutterMethodChannel) {
         self.azureChannel = azureChannel
+    }
+
+    deinit {
+        if let recognizer = continousSpeechRecognizer {
+            try? recognizer.stopContinuousRecognition()
+        }
+        stopMicrophoneStream()
     }
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -63,6 +77,15 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         else if (call.method == "continuousStream") {
             print("Called continuousStream")
             continuousStream(speechSubscriptionKey: speechSubscriptionKey, serviceRegion: serviceRegion, lang: lang)
+            result(true)
+        }
+        else if (call.method == "startContinuousStream") {
+            continuousStream(
+                speechSubscriptionKey: speechSubscriptionKey,
+                serviceRegion: serviceRegion,
+                lang: lang,
+                shouldToggle: false
+            )
             result(true)
         }
         else if (call.method == "continuousStreamWithAssessment") {
@@ -211,22 +234,38 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
     }
     
     private func stopContinuousStream(flutterResult: FlutterResult) {
-        if (continousListeningStarted) {
-            print("Stopping continous recognition")
-            do {
-                try continousSpeechRecognizer!.stopContinuousRecognition()
-                self.azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
-                continousSpeechRecognizer = nil
-                continousListeningStarted = false
-                flutterResult(true)
-            }
-            catch {
-                print("Error occurred stopping continous recognition")
-            }
+        if continousListeningStarting {
+            stopRequestedWhileStarting = true
+            pendingStopResult = flutterResult
+            return
+        }
+        guard continousListeningStarted, let recognizer = continousSpeechRecognizer else {
+            stopMicrophoneStream()
+            flutterResult(true)
+            return
+        }
+
+        do {
+            try recognizer.stopContinuousRecognition()
+            finishContinuousRecognition()
+            flutterResult(true)
+        } catch {
+            stopMicrophoneStream()
+            continousSpeechRecognizer = nil
+            continousListeningStarted = false
+            flutterResult(FlutterError(code: "azure_stop_failed", message: error.localizedDescription, details: nil))
         }
     }
     
-    private func continuousStream(speechSubscriptionKey : String, serviceRegion : String, lang: String) {
+    private func continuousStream(
+        speechSubscriptionKey : String,
+        serviceRegion : String,
+        lang: String,
+        shouldToggle: Bool = true
+    ) {
+        if continousListeningStarting || (!shouldToggle && continousListeningStarted) {
+            return
+        }
         if (continousListeningStarted) {
             print("Stopping continous recognition")
             do {
@@ -234,6 +273,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 self.azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
                 continousSpeechRecognizer = nil
                 continousListeningStarted = false
+                stopMicrophoneStream()
             }
             catch {
                 print("Error occurred stopping continous recognition")
@@ -241,13 +281,17 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         }
         else {
             print("Starting continous recognition")
+            continousListeningStarting = true
             setupAudioSession()
             
             let speechConfig = try! SPXSpeechConfiguration(subscription: speechSubscriptionKey, region: serviceRegion)
             
             speechConfig.speechRecognitionLanguage = lang
             
-            let audioConfig = SPXAudioConfiguration()
+            guard let audioConfig = try? createStreamAudioConfiguration() else {
+                failContinuousStart(message: "Unable to start microphone stream")
+                return
+            }
             
             continousSpeechRecognizer = try! SPXSpeechRecognizer(speechConfiguration: speechConfig, audioConfiguration: audioConfig)
             continousSpeechRecognizer!.addRecognizingEventHandler() {reco, evt in
@@ -265,19 +309,27 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 try continousSpeechRecognizer?.startContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
                 continousListeningStarted = true
+                continousListeningStarting = false
+                if stopRequestedWhileStarting {
+                    stopRequestedWhileStarting = false
+                    let result = pendingStopResult
+                    pendingStopResult = nil
+                    stopContinuousStream(flutterResult: result ?? { _ in })
+                }
             }
             catch {
                 print("stopContinuousRecognition stop")
-                try! continousSpeechRecognizer?.stopContinuousRecognition()
-                self.azureChannel.invokeMethod("speech.onException", arguments: nil)
-                continousSpeechRecognizer = nil
-                continousListeningStarted = false
+                failContinuousStart(message: error.localizedDescription)
             }
         }
     }
     
     private func continuousStreamWithAssessment(referenceText: String, phonemeAlphabet: String, granularity: SPXPronunciationAssessmentGranularity, enableMiscue: Bool, speechSubscriptionKey : String, serviceRegion : String, lang: String, nBestPhonemeCount: Int?) {
         print("Continuous recognition started: \(continousListeningStarted)")
+        if continousListeningStarting {
+            stopRequestedWhileStarting = true
+            return
+        }
         if (continousListeningStarted) {
             print("Stopping continous recognition")
             do {
@@ -285,6 +337,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 self.azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
                 continousSpeechRecognizer = nil
                 continousListeningStarted = false
+                stopMicrophoneStream()
             }
             catch {
                 print("Error occurred stopping continous recognition")
@@ -292,6 +345,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         }
         else {
             print("Starting continous recognition")
+            continousListeningStarting = true
             do {
                 setupAudioSession()
                 
@@ -310,7 +364,10 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 }
                 
                 
-                let audioConfig = SPXAudioConfiguration()
+                guard let audioConfig = try? createStreamAudioConfiguration() else {
+                    failContinuousStart(message: "Unable to start microphone stream")
+                    return
+                }
                 
                 continousSpeechRecognizer = try SPXSpeechRecognizer(speechConfiguration: speechConfig, audioConfiguration: audioConfig)
                 try pronunciationAssessmentConfig.apply(to: continousSpeechRecognizer!)
@@ -331,13 +388,155 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
                 try continousSpeechRecognizer!.startContinuousRecognition()
                 self.azureChannel.invokeMethod("speech.onRecognitionStarted", arguments: nil)
                 continousListeningStarted = true
+                continousListeningStarting = false
+                if stopRequestedWhileStarting {
+                    stopRequestedWhileStarting = false
+                    let result = pendingStopResult
+                    pendingStopResult = nil
+                    stopContinuousStream(flutterResult: result ?? { _ in })
+                }
             }
             catch {
                 print("An unexpected error occurred: \(error)")
+                failContinuousStart(message: error.localizedDescription)
             }
         }
     }
+
+    private func failContinuousStart(message: String) {
+        continousSpeechRecognizer = nil
+        continousListeningStarted = false
+        continousListeningStarting = false
+        stopRequestedWhileStarting = false
+        stopMicrophoneStream()
+        pendingStopResult?(FlutterError(
+            code: "azure_start_failed",
+            message: message,
+            details: nil
+        ))
+        pendingStopResult = nil
+        azureChannel.invokeMethod("speech.onException", arguments: message)
+    }
     
+    private func createStreamAudioConfiguration() throws -> SPXAudioConfiguration {
+        stopMicrophoneStream()
+
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        guard
+            let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 16000,
+                channels: 1,
+                interleaved: true
+            ),
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat),
+            let speechFormat = SPXAudioStreamFormat(
+                usingPCMWithSampleRate: 16000,
+                bitsPerSample: 16,
+                channels: 1
+            ),
+            let stream = SPXPushAudioInputStream(audioFormat: speechFormat)
+        else {
+            throw NSError(
+                domain: "azure_speech_recognition",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to configure microphone stream"]
+            )
+        }
+
+        audioConverter = converter
+        pushAudioStream = stream
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            self?.write(buffer: buffer, targetFormat: targetFormat)
+        }
+        audioEngine.prepare()
+        try audioEngine.start()
+
+        return SPXAudioConfiguration(streamInput: stream)
+    }
+
+    private func write(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
+        guard
+            let converter = audioConverter,
+            let stream = pushAudioStream
+        else {
+            return
+        }
+
+        let frameCapacity = AVAudioFrameCount(
+            (Double(buffer.frameLength) * targetFormat.sampleRate / buffer.format.sampleRate).rounded(.up)
+        )
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCapacity) else {
+            return
+        }
+
+        var inputProvided = false
+        var conversionError: NSError?
+        converter.convert(to: convertedBuffer, error: &conversionError) { _, status in
+            if inputProvided {
+                status.pointee = .noDataNow
+                return nil
+            }
+            inputProvided = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard conversionError == nil else {
+            return
+        }
+
+        let audioBuffer = convertedBuffer.audioBufferList.pointee.mBuffers
+        guard let audioData = audioBuffer.mData, audioBuffer.mDataByteSize > 0 else {
+            return
+        }
+        let data = Data(bytes: audioData, count: Int(audioBuffer.mDataByteSize))
+        stream.write(data)
+        reportSoundLevel(data)
+    }
+
+    private func reportSoundLevel(_ data: Data) {
+        guard Date().timeIntervalSince(lastSoundLevelReportedAt) >= 0.1 else {
+            return
+        }
+        lastSoundLevelReportedAt = Date()
+
+        let level = data.withUnsafeBytes { rawBuffer -> Double in
+            let samples = rawBuffer.bindMemory(to: Int16.self)
+            guard !samples.isEmpty else {
+                return 0
+            }
+            let meanSquare = samples.reduce(0.0) { sum, sample in
+                let value = Double(sample)
+                return sum + value * value
+            } / Double(samples.count)
+            let rms = sqrt(meanSquare)
+            let decibels = 20 * log10(max(rms / Double(Int16.max), 0.000001))
+            return min(max((decibels + 60) * (100 / 60), 0), 100)
+        }
+        DispatchQueue.main.async {
+            self.azureChannel.invokeMethod("speech.onSoundLevel", arguments: level)
+        }
+    }
+
+    private func finishContinuousRecognition() {
+        azureChannel.invokeMethod("speech.onRecognitionStopped", arguments: nil)
+        continousSpeechRecognizer = nil
+        continousListeningStarted = false
+        continousListeningStarting = false
+        stopMicrophoneStream()
+    }
+
+    private func stopMicrophoneStream() {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        pushAudioStream?.close()
+        pushAudioStream = nil
+        audioConverter = nil
+    }
+
     private func setupAudioSession() {
         let audioSession = AVAudioSession.sharedInstance()
         
