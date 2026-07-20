@@ -234,7 +234,7 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         simpleRecognitionTasks[taskId] = SimpleRecognitionTask(task: task, isCanceled: false)
     }
     
-    private func stopContinuousStream(flutterResult: FlutterResult) {
+    private func stopContinuousStream(flutterResult: @escaping FlutterResult) {
         if continousListeningStarting {
             if pendingStopResult != nil {
                 flutterResult(true)
@@ -484,7 +484,15 @@ public class SwiftAzureSpeechRecognitionPlugin: NSObject, FlutterPlugin {
         audioEngine.prepare()
         try audioEngine.start()
 
-        return SPXAudioConfiguration(streamInput: stream)
+        guard let audioConfig = SPXAudioConfiguration(streamInput: stream) else {
+            stopMicrophoneStream()
+            throw NSError(
+                domain: "azure_speech_recognition",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to create audio configuration"]
+            )
+        }
+        return audioConfig
     }
 
     private func write(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {

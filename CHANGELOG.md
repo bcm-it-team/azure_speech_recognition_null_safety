@@ -1,3 +1,11 @@
+## 0.9.6+10
+- Fix(iOS): Mark `stopContinuousStream` FlutterResult as `@escaping` for deferred stop while starting.
+- Fix(iOS): Guard-unwrap `SPXAudioConfiguration(streamInput:)` instead of returning a non-optional that fails to compile.
+
+## 0.9.6+9
+- Fix: Stabilize continuous recognition start/stop and microphone stream handling on iOS/Android.
+- Feat: Expose sound-level callbacks and safer MethodChannel error propagation for host apps.
+
 ## 0.9.6+8
 - Fix(Android): Add plugin-level consumer ProGuard rules for Speech SDK reactive/logging optional classes in release minification.
 - Chore(Android): Keep default Speech SDK at `1.48.2` with 16KB-native alignment and no host-app `jniLibs` excludes.
